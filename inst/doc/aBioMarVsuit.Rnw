@@ -1,0 +1,520 @@
+%\VignetteIndexEntry{R package for testing and validating biomarkers for predicting survival outcome.}
+%\VignetteDepends{aBioMarVsuit}
+%\VignettePackage{aBioMarVsuit}
+%\VignetteKeywords{aBioMarVsuit, biomarkers, Coxph Survival regressions, PCA, PLS, Majority Votes, Lasso and Elastic Net}
+
+\documentclass[a4paper]{article}
+\usepackage[OT1]{fontenc}
+\usepackage{Sweave}
+\usepackage{url}
+\usepackage{afterpage}
+\usepackage{hyperref}
+\usepackage{geometry}
+\geometry{ hmargin=3cm, vmargin=2.5cm }
+\usepackage{graphicx}
+\usepackage{amsmath,amssymb}
+\usepackage{bm}
+
+
+
+\DefineVerbatimEnvironment{Sinput}{Verbatim} {xleftmargin=2em}
+\DefineVerbatimEnvironment{Soutput}{Verbatim}{xleftmargin=2em}
+%\DefineVerbatimEnvironment{Soutput}{Verbatim}{xleftmargin=2em,
+%                                              frame=single}
+
+
+\begin{document}
+
+
+
+\title{Usage of \texttt{aBioMarVsuit} Package (version 1.0)}
+\author{Pushpike Thilakarathne \\ I-BioStat, \\University of Hesselt\\ Belgium}
+
+\maketitle
+
+\tableofcontents
+\pagebreak{}
+
+<<config,echo=FALSE>>=
+options(width = 80)
+options(continue=" ")
+options(prompt="R> ")
+set.seed(123)
+
+@
+
+\section{Introduction}
+This particular R package \texttt{aBioMarVsuit} stands for a biomarker validation suit for predicting survival out come. 
+
+This package is useful in finding and validating predictive gene signature for 
+classifying low risk versus high risk patients in early phase clinical trials.  
+The primary end point is survival, and classification of cancer patients into low risk or 
+high risk groups is mainly based on median cutoff, but others can be considered as well. 
+It can also accommodate the prognostic factors if any. Both statistical and machine learning 
+techniques are integrated as validating suit.  The package can be used to perform the analysis using 
+the entire samples and can also be used to carryout large scale cross validations. For the first instance, 
+package reduces larger gene expression matrix to smaller version using supervised principle components analysis. 
+Later entire validation procedure can be performed using reduced gene expression matrix with various types of 
+validation schemes.
+
+
+This vignette is organized as follows.  First, we will introduce several functions that can be used to analyze entire datasets.  In the later part of this
+document we will show more advance functions that can be used to perform various type of cross validation schemes.
+
+
+\section{Load the Data}
+First we load the package \texttt{aBioMarVsuit} and then well known real-life data set 
+\texttt{DLBCL}. The dataset contains an expression set on diffuse large B-cell lymphoma (for more details see Rosenwald et al\. 2002 ).
+
+
+
+<<loadPackage>>=
+library(aBioMarVsuit)
+@
+
+
+\subsection{DLBCL data set}
+<<>>=
+data(exprLym)
+
+GexprMatrix<-exprs(exprLym)
+SurvData<-pData(exprLym)
+
+PatietId<-rownames(SurvData[!is.na(SurvData[,c("IPI")]),])
+Gdata<-GexprMatrix[,PatietId]
+dim(Gdata)
+
+SurvTime<-SurvData[!is.na(SurvData[,c("IPI")]),c("FollowUpYears")]
+Censor<-ifelse(SurvData[!is.na(SurvData[,c("IPI")]),c("StatusAtFollowUp")]=="Dead",1,0)
+
+Gdata[is.na(Gdata)]<-mean(Gdata,na.rm=T)
+
+#generate some prognostic factors
+nPatients<-ncol(Gdata)
+ProgFact<-data.frame(Age=floor(SurvTime*0.68+rnorm(nPatients,30,10)),
+		Stage=sample(1:4,nPatients,replace=T),sex=rbinom(nPatients, 1, 0.5))
+@
+
+
+\subsection{Simulated Data}
+Alternatively, simulated data sets can also be very valuable. To that end we have developed a new function that can 
+generate some synthetic survival data and gene expression data.
+
+The function generates the gene expression matrix where small set of genes (50) are informative and rest of them are set as noisy genes. Next to that Survival time and Censoring information are generated based on first right singular vectors of svd of the gene expression matrix. It also generates other prognostic factors such as Age, Stage and sex which slightly correlated with survival time.
+<<eval=FALSE>>=
+SimData<-GenSynSurvData(nPatients=100,nGenes=150,Pi=0.5)
+
+SurvTime<-SimData$SurvTime
+Censor<-SimData$Censor
+ProgFact<-SimData$ProgFact
+Gdata<-SimData$Gdata
+featurenames<-SimData$featurenames
+@
+
+\section{Basic Functions}
+In this Section we introduce a set of functions that can be used to reduce the gene expression matrix, classify and estimate HR for low risk group without employing any cross validations.
+
+\subsection{Function EstimHR}
+The function does the classification based on the risk scores provided by the user and visualize survival fit along with HR estimate.
+
+<<eval=FALSE>>=
+EstimHR(RiskScore, Sdata, ProgFact = NULL, Plots = FALSE, MedianCut = NULL)
+@
+
+\subsection{Function SurFitPlsClasif}
+This function  reduces larger gene expression matrix to smaller version using supervised pca approach.
+The function performs the PLS on reduced gene expression matrix and fit Cox proportional hazard model with first PLS scores as a covariate afterwards.  
+And classifier is then built based on the first PLS scores multiplied by its estimated regression coefficient. Patients are classified using median of the risk scores.
+
+It can also be used to perform the grid analysis where the grid will be several cut off values and default is median cut off. This function can handle single and multiple genes. Other prognostic factors can be included to the model. 
+
+<<>>=
+results1<-SurFitPlsClasif(SurvTime, Gdata,  Censor, ReduceDim=TRUE, NuFeToBeSel=100,
+		ProgFact=NULL, Plots = FALSE,MedianCut = NULL )
+
+#Estimated HR for low risk group
+summary(results1$SurFit)[[8]][-2]
+
+@
+
+<<Plsfig,fig=TRUE,width=5,height=4>>=
+plot(survfit(results1$SurFit,newdata=data.frame(gid=as.factor(c("low","high")))),col=3:2,
+		main="Fitted Survival Curves [PLS]",xlab="Time",ylab="Probability")
+legend("topright",c("Low risk","High Risk"),col=3:2,lty=c(1,1))
+@
+
+\subsection{Function SurFitPcaClasif}
+This works more or less the same way as function SurFitPlsClasif but function uses first PCA scores on the reduced gene expression matrix to build up the classifier.
+
+<<eval=FALSE>>=
+results1<-SurFitPcaClasif(SurvTime, Gdata, Censor, ReduceDim=TRUE, NuFeToBeSel=100,
+                        ProgFact=NULL,  Plots = FALSE,      MedianCut = NULL )
+summary(results1$SurFit)
+@
+
+\subsection{Function GeneSpecificCoxPh}
+This function fits gene by gene Cox proportional hazard model and perform the classification based on median risk 
+score which has been estimated using a single gene expression levels.
+
+<<>>=
+Ana1<-GeneSpecificCoxPh( SurvTime, Gdata, Censor,  ReduceDim=TRUE, NuFeToBeSel=50,
+                        ProgFact=NULL,  MedianCut = NULL)
+
+show(Ana1)
+summary(Ana1)
+@
+
+<<gSpefig,fig=TRUE,width=8,height=4>>=
+plot(Ana1)
+@
+
+\subsection{Function MajorityVotes}
+The function performs the classification based on majority votes and estimate the HR for low risk group. Note that input for the this function is the output from
+GeneSpecificCoxPh function.
+<<MvFig,fig=TRUE,width=7,height=5>>=
+MVres<-MajorityVotes(Ana1,ProgFact=NULL, SurvTime,Censor,J=1)
+@
+
+\subsection{Function GridAnalysis}
+The function performs the sensitivity of the cut off values used in classification and percentiles of risk score obtained under SurFitPlsClasif or 
+SurFitPcaClasif methods is used as fine grid points.
+ 
+<<gridFig,fig=TRUE,width=6,height=4>>=
+GridAnalysis(SurvTime,Gdata,Censor,ReduceDim=TRUE, NuFeToBeSel=150, 
+ProgFact=NULL, Plots = TRUE,DimMethod="PLS")
+@
+
+Other dimension reduction methods can also considered. 
+<<eval=FALSE>>=
+GridAnalysis(SurvTime,Gdata,Censor,ReduceDim=TRUE, NuFeToBeSel=150, 
+ProgFact=NULL, Plots = TRUE,DimMethod="PCA")
+@
+
+
+\subsection{Function SeqIncreaseGenes}
+This function sequentially increases the number of top $K$ genes to be used in the PCA or PLS methods in order to obtain the risk score.
+<<>>=
+data(exprLym)
+
+GexprMatrix<-exprs(exprLym)
+SurvData<-pData(exprLym)
+
+PatietId<-rownames(SurvData[!is.na(SurvData[,c("IPI")]),])
+Gdata<-GexprMatrix[,PatietId]
+
+SurvTime<-SurvData[!is.na(SurvData[,c("IPI")]),c("FollowUpYears")]
+Censor<-ifelse(SurvData[!is.na(SurvData[,c("IPI")]),c("StatusAtFollowUp")]=="Dead",1,0)
+
+Gdata[is.na(Gdata)]<-mean(Gdata,na.rm=T)
+@
+
+<<seInFig,fig=TRUE,width=6,height=4>>=
+SeqIncreaseGenes(TopK=15,SurvTime=SurvTime,Gdata=Gdata,Censor=Censor,ReduceDim=TRUE, 
+NuFeToBeSel=150, ProgFact=NULL, Plots = TRUE,DimMethod="PLS")
+@
+
+\subsection{Function NullDistHR}
+This function generates the null distribution of the HR by permuting the observations. Several ways of permutation setting are implemented. That is, function can be used to generate null distributions for four different validation schemes, PLS based, PCA based, Majority votes based and Lasso based.
+<<>>=
+set.seed(123)
+Perm<-NullDistHR(n.perm=50,case=2, Validation="PLSbased", SurvTime, Gdata,
+                        Censor,  ReduceDim=TRUE,  NuFeToBeSel=150,
+                        ProgFact=NULL,  MedianCut = NULL )
+show(Perm)
+
+summary(Perm)
+@
+
+<<NullDisfig,fig=TRUE,width=4,height=4>>=
+plot(Perm)
+@
+
+\subsection{Function LassoElasticNetCoxPh}
+This is a wrapper function for glmnet and fit model with all prognostic factors and genes. LASSO, Elastic net and Ridge regressions can be fitted. Optimum lambda will be used to select the non-zero shrinkage coefficients. The function can accommodates prognostic factors and they will be forced to be in the model if they are supplied.
+This returns estimated HR for low risk group and class labels for each patients and other interesting objects.
+<<>>=
+NuFeToBeSel=50
+DataForReduction<-list(x=Gdata,y=SurvTime, censoring.status=Censor, 
+		featurenames=rownames(Gdata))
+TentativeList<-names(sort(abs(superpc.train(DataForReduction, 
+type="survival")$feature.scores),decreasing =TRUE))[1:NuFeToBeSel]
+               
+ReduGdata<-Gdata[TentativeList,]
+@
+
+Application of Lasso with 50 genes
+<<LassoFig,fig=TRUE,width=7,height=7>>=
+set.seed(145)
+L1<-LassoElasticNetCoxPh(SurvTime,Censor,ReduGdata[1:50,], ProgFact=NULL, Plots = TRUE, 
+                     MedianCut = NULL , GeneList=NULL,
+                        StZ=TRUE,  alpha=1)
+summary(L1$Results$SurFit)				
+@
+
+\afterpage{\clearpage}
+\pagebreak{}
+
+\section{More Advance Functions.}
+In this we focus on more advanced functions that can be used for cross validations.
+
+\subsection{CVforDimPcaPls}
+Cross validations for the analysis performs by SurFitPlsClasif and SurFitPcaClasif functions where the dimension reduction methods are PCA and PLS.
+
+<<eval=FALSE>>=
+R1<-CVforDimPcaPls(fold=3,SurvTime, Gdata, Censor,  ReduceDim=TRUE,
+                        NuFeToBeSel=150, ProgFact=ProgFact,
+                        Plots = FALSE,  n=50 ,  DR ="PLS", mtitle="")
+show(R1)    
+@
+<<eval=FALSE>>=
+plot(R1,ylim=c(0,5))
+@
+
+\subsection{CvForMajorityVotes}
+Performs cross validations for Majority votes based classification. 
+<<eval=FALSE>>=
+cvmvres<-CvForMajorityVotes(SurvTime,Censor, ProgFact=NULL, Gdata, ReduceDim=TRUE,
+		NuFeToBeSel=50, fold=3, nCV=50)
+@
+
+<<echo=FALSE>>=
+pathdata<-system.file("doc/extdata",package = "aBioMarVsuit")
+load(paste(pathdata,"/cvmvres.RData",sep=""))
+@
+
+<<>>=
+show(cvmvres)
+@
+
+<<CVmvfig,fig=TRUE,width=7,height=4>>=
+plot(cvmvres)
+@
+
+\subsection{CVGeneSpecificCoxPh}
+This function performs the cross validation for gene by gene analysis. First data will be divided into train and test. Second, gene-specific model is fitted on train data and classifier is built. And classifier is then evaluated on test data for that particular gene. Process is repeated for all genes. All these steps can be repeated many times.
+
+
+<<eval=FALSE>>=
+CVR1<-CVGeneSpecificCoxPh(fold=3, SurvTime, Gdata, Censor,
+                        ReduceDim=TRUE,  NuFeToBeSel=50,
+                        ProgFact=NULL, MedianCut = NULL,
+                        n.cv=50)
+@
+
+<<echo=FALSE>>=
+pathdata<-system.file("doc/extdata",package = "aBioMarVsuit")
+load(paste(pathdata,"/CVgbyg.RData",sep=""))
+@
+
+
+<<>>=				
+show(CVR1)                         
+
+summary(CVR1, Which=20)
+@
+
+<<CVgbygFig,fig=TRUE,width=7,height=4>>=
+plot(CVR1, Which=20,ylim=c(0,5))
+@
+
+
+\subsection{GeneOccurence}
+This function searches for mostly selected top genes during the cross validation of gene by gene analysis. Top genes are ranked based on estimated HR for low risk. Therefore top gene should have minimum HR estimate. Number of top K genes need to be considered can be given in advanced. Finally it visualizes the genes that are selected at least 5$\%$
+ times during the cross validations. 
+
+<<GeneOcuFig,fig=TRUE,width=7,height=5>>=
+res<-GeneOccurence(CVR1,TopK=20,minFreq=5)
+@
+
+\subsection{GeneOccurence}
+This function further processes the cross validated gene by gene analysis results. 
+And function sequentially considers top $k_{1}, k_{2},...,k_{n}$ number of genes based on the 
+estimated HR on the test data of the cross validated gene by gene analysis. For each top $K$ genes function recompute first PCA or PLS 
+on train data and estimate risk scores on both test and train data only on the gene expression matrix with top $k$ genes. Patients are 
+then classified as having low or high risk based on the test data where the cutoff used is median of the risk score based on train data. Finally hazard ratio is estimated based on test data. 
+The process is repeated for each top $K$ gene sets.
+
+The function can be interpreted as cross validated version of the function SeqIncreaseGenes. 
+<<eval=FALSE>>=
+CVTopK<-CVSeqIncreaseGenes(CVR1,top=seq(5,100,by=5),SurvTime,Censor, ProgFact=NULL)
+plot(CVTopK)
+summary(CVTopK)
+@
+
+\afterpage{\clearpage}
+\pagebreak{}
+
+\subsection{CVLassoElasticNetCoxPh}
+The function performs the cross validations for LASSO and Elastic net models for 
+Cox proportional hazard model. Top genes selected are being updated at each iteration and use in the 
+classifier. That means predictive gene signature is varied iteration to iteration. 
+The underline idea is to investigate the HR under train and test data as well as mostly selected 
+genes during this process. 
+
+<<eval=FALSE>>=
+#Without Prognostic Factors
+set.seed(123) 
+CVres<-CVLassoElasticNetCoxPh(n.cv=50,fold=3,SurvTime, Censor, Gdata, 
+		NuFeToBeSel=100, ProgFact=NULL, 
+       ReduceDim=TRUE, GeneList=NULL,  StZ=TRUE, alpha=1)
+                         
+@
+
+<<echo=FALSE>>=
+pathdata<-system.file("doc/extdata",package = "aBioMarVsuit")
+load(paste(pathdata,"/CVres.RData",sep=""))
+@
+
+
+<<>>=
+show(CVres)
+summary(CVres)
+@
+
+
+
+<<CVL1Fig1,fig=TRUE,width=7,height=5>>=
+#distribution of the HR
+plot(CVres,ptype=1)
+@
+
+<<CVL1Fig2,fig=TRUE,width=4,height=4>>=
+#estimated HR vs number of genes selected
+plot(CVres,ptype=2)
+@
+
+<<CVL1Fig3,fig=TRUE,width=7,height=5>>=
+#Mostly selected 30 genes
+plot(CVres,ptype=3)
+@
+
+\subsubsection{Cross Validation for Elastic Net}
+Cross validations for Elastic Net with $\alpha = 0.2$.
+<<eval=FALSE>>=
+set.seed(123) 
+ElNet<-CVLassoElasticNetCoxPh(n.cv=20,fold=3,SurvTime, 
+  Censor, Gdata, NuFeToBeSel=150, ProgFact=NULL, 
+  ReduceDim=TRUE, GeneList=NULL,  StZ=TRUE, alpha=0.2)
+@
+
+
+\subsubsection{Apply Elastic Net on grid of $\alpha$ values and cross validations}
+<<>>=
+grid.alpha<-seq(0.1,0.9,by=0.1)
+@
+
+<<eval=FALSE>>=
+set.seed(123) 
+
+CvElNetResults<-sapply(grid.alpha, 
+		function(alpha) CVLassoElasticNetCoxPh(n.cv=50,fold=3,SurvTime, 
+                            Censor, Gdata, NuFeToBeSel=100, ProgFact=NULL, 
+                             ReduceDim=TRUE, GeneList=NULL,  StZ=TRUE, 
+                             alpha=alpha))
+
+#extract slots from S4 Class objects
+Runtime<-sapply(1:length(grid.alpha),
+		function(k) slot(CvElNetResults[[k]], "Run.Time"))
+lambda <-sapply(1:length(grid.alpha),
+		function(k) slot(CvElNetResults[[k]], "lambda"))
+n.g    <-sapply(1:length(grid.alpha),
+		function(k) slot(CvElNetResults[[k]], "n.g"))
+HRT    <-sapply(1:length(grid.alpha), 
+		function(k) slot(CvElNetResults[[k]], "HRT")[,1] )
+HRTE   <-sapply(1:length(grid.alpha), 
+		function(k) slot(CvElNetResults[[k]], "HRTE")[,1] )
+HRTm   <-t(sapply(1:length(grid.alpha),
+				function(k) quantile(slot(CvElNetResults[[k]], "HRT")[,1],
+         na.rm=T,probs = c(0.025,0.5,0.975))))
+HRTEm  <-t(sapply(1:length(grid.alpha),
+				function(k) quantile(slot(CvElNetResults[[k]], "HRTE")[,1],
+         na.rm=T,probs = c(0.025,0.5,0.975)))) 
+freq   <-sapply(1:length(grid.alpha), 
+		function(k) colSums(slot(CvElNetResults[[k]], "gene.mat")))
+@
+
+<<echo=FALSE>>=
+pathdata<-system.file("doc/extdata",package = "aBioMarVsuit")
+load(paste(pathdata,"/CvElNetResults.RData",sep=""))
+@
+
+
+<<CVELFig1,fig=TRUE,width=7,height=5>>=
+colnames(HRTE)<-grid.alpha
+boxplot(HRTE,ylim=c(0,max(HRTE)),names=grid.alpha[1:length(grid.alpha)],
+main="HR on Testing Set \n 100 runs",col=2:(length(grid.alpha)+1),ylab="HR",
+xlab=expression(alpha),cex.main=1.5,cex.lab=1.3)
+@
+
+
+
+\subsection{InnerCrossValELNet}
+
+The function can be used to perform the further cross validations based on 
+fixed gene list while classifier is evaluated on completely independent samples. 
+The classifier is built on the weights obtain from the inner cross validations results
+ and it is tested on out-of-bag data. These weights can be fixed or can be updated at each outer iteration. 
+ If weights are not fixed then patients are classified using majority votes. Otherwise, weights obtained from 
+ the inner cross validations are summarized by mean weights and used in the classifier. Inner cross validations 
+ are performed by calling to function CVLassoElasticNetCoxPh. Hazard ratio for low risk group is estimated using 
+ out-of-bag data. 
+
+<<eval=FALSE>>=
+#Select Top K genes (Mostly selected genes during the CV)
+ TopGenes<-c("TPRT(23590)", "COL19A1(1310)","RPL7L1(285855)","DMD(1756)", "NR3C1(2908)",
+ "ITGA6(3655)", "PRKD1(5587)","IFRD1(3475)","BMP6(654)","SFXN4(119559)","TOPBP1(11073)" 
+ ,"LILRA4(23547)", "DNTTIP2(30836)" , "HBS1L(10767)"  ,  "MUS81(80198)")
+
+#Example I-----------------------------------------
+# without prognostic factors and Weights are updated
+
+WOpWup<-InnerCrossValELNet(fold=3,n.cv=20,n.innerCV=50,MixParAlpha=1,
+                             Gdata,TopGenes,WeightsFixed=FALSE,
+                             SurvTime, Censor,ProgFact=NULL)
+show(WOpWup)
+summary(WOpWup)
+
+#Example II-----------------------------------------                             
+#with prognostic factors 
+#and Weights are fixed
+                             
+WpWFtrue<-InnerCrossValELNet(fold=3,n.cv=20,n.innerCV=50,MixParAlpha=1,
+                             Gdata,TopGenes,WeightsFixed=TRUE,
+                             SurvTime, Censor,ProgFact)
+show(WpWFtrue)
+summary(WpWFtrue)   
+
+#and Weights are NOT fixed
+WpWFfalse<-InnerCrossValELNet(fold=3,n.cv=20,n.innerCV=50,MixParAlpha=1,
+                             Gdata,TopGenes,WeightsFixed=FALSE,
+                             SurvTime, Censor,ProgFact)
+show(WpWFfalse)
+summary(WpWFfalse)                            
+@
+
+<<echo=FALSE>>=
+pathdata<-system.file("doc/extdata",package = "aBioMarVsuit")
+load(paste(pathdata,"/InnerCvElNetResults.RData",sep=""))
+@
+
+<<InnerCVL1Fig1,fig=TRUE,width=7,height=5>>=
+plot(WpWFtrue,ptype=1)	
+@
+
+
+
+<<eval=FALSE>>=
+# compare results based on classifier with fixed weights versus classifier with weights 
+# changing and final classification based on majority votes
+
+# estimated HR at each iteration for weights NOT fixed
+Res<-data.frame(HRTrue=slot(WpWFtrue, "HRTE")[,1],HRfalse=slot(WpWFfalse, "HRTE")[,1])
+boxplot(Res,col="red",ylim=c(0,1),main="Estimated HR based on completely
+independent Samples",names=c("Weights Fixed","Weights Updated"))
+
+# estimated density of the HR 
+plot(WpWFtrue,ptype=2)
+@
+
+
+\end{document}

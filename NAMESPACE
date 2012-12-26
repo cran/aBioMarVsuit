@@ -1,0 +1,9 @@
+import(methods,utils, stats, Biobase)
+
+importFrom(graphics, plot)
+
+exportClasses("GeneSpecific","CVfordimMethods","CVGbyG","CVSeqInc","CVMV","Permutation","cvelasticnetcox","FurtherValidation")
+
+exportMethods("show", "summary", "plot")
+
+export(GenSynSurvData,CVforDimPcaPls,EstimHR,GeneSpecificCoxPh,CVGeneSpecificCoxPh,SurFitPcaClasif,SurFitPlsClasif,GridAnalysis,GeneOccurence,SeqIncreaseGenes,CVSeqIncreaseGenes,MajorityVotes,CvForMajorityVotes,LassoElasticNetCoxPh,NullDistHR,CVLassoElasticNetCoxPh,InnerCrossValELNet)
